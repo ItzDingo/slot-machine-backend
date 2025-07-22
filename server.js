@@ -2,17 +2,17 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const session = require('express-session');
+const MongoStore = require('connect-mongo');
 const passport = require('passport');
 const DiscordStrategy = require('passport-discord').Strategy;
 const cors = require('cors');
-const path = require('path');
 
 const app = express();
 
 // MongoDB connection
-mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch(err => console.error('❌ MongoDB connection error:', err));
 
 // User Schema
 const userSchema = new mongoose.Schema({
@@ -27,31 +27,48 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// Middleware
+// CORS Configuration
 const allowedOrigins = [
-  'https://itzdingo.github.io/slot-machine-frontend/', // Your GitHub Pages URL
-  'https://slot-machine-backend-34lg.onrender.com', // Your Render backend URL
-  'http://localhost:5500' // For local testing
+  'https://itzdingo.github.io',
+  'https://itzdingo.github.io/slot-machine-frontend',
+  'http://localhost:5500'
 ];
 
 app.use(cors({
-  origin: 'https://itzdingo.github.io/slot-machine-frontend',
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+app.options('*', cors()); // Enable pre-flight for all routes
+
 app.use(express.json());
+
+// Session Configuration
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGODB_URI,
+    ttl: 24 * 60 * 60 // 1 day
+  }),
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    secure: true,
+    sameSite: 'none',
+    maxAge: 24 * 60 * 60 * 1000,
+    domain: 'slot-machine-backend-34lg.onrender.com'
   }
 }));
+
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -92,8 +109,10 @@ passport.deserializeUser(async (id, done) => {
 // Auth Routes
 app.get('/auth/discord', passport.authenticate('discord'));
 app.get('/auth/discord/callback', 
-  passport.authenticate('discord', { failureRedirect: '/login' }),
-  (req, res) => res.redirect(process.env.FRONTEND_URL)
+  passport.authenticate('discord', { 
+    failureRedirect: `${process.env.FRONTEND_URL}/?login_failed=true`,
+    successRedirect: process.env.FRONTEND_URL
+  })
 );
 
 app.get('/auth/user', (req, res) => {
@@ -112,9 +131,16 @@ app.get('/auth/user', (req, res) => {
 
 app.post('/auth/logout', (req, res) => {
   req.logout(() => {
-    res.sendStatus(200);
+    req.session.destroy(err => {
+      if (err) {
+        return res.status(500).json({ error: 'Logout failed' });
+      }
+      res.clearCookie('connect.sid');
+      res.sendStatus(200);
+    });
   });
 });
+
 
 // Game API Routes
 app.get('/api/user/:id', async (req, res) => {

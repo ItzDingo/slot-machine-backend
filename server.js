@@ -5,6 +5,7 @@ const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const cors = require('cors');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 
@@ -18,16 +19,24 @@ const UserSchema = new mongoose.Schema({
   discordId: { type: String, required: true, unique: true },
   username: { type: String, required: true },
   avatar: { type: String },
-  chips: { type: Number, default: 30 },
+  chips: { type: Number, default: 1000 },
   dice: { type: Number, default: 0 },
   lastDaily: { type: Date },
   lastSpin: { type: Date },
-  loginToken: { type: String, unique: true }
+  loginToken: { type: String, unique: true },
+  tokenCreatedAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model('User', UserSchema);
 
+// Rate Limiter
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+
 // Middleware
+app.use(limiter);
 app.use(cors({
   origin: [
     'https://itzdingo.github.io',
@@ -48,58 +57,114 @@ app.use(session({
   saveUninitialized: false,
   store: MongoStore.create({ mongoUrl: process.env.MONGODB_URI }),
   cookie: {
-    secure: true,
-    sameSite: 'none',
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   }
 }));
 
-// Auth Routes
+// Token Login Endpoint
 app.post('/auth/token', async (req, res) => {
   try {
     const { token } = req.body;
-    if (!token) return res.status(400).json({ error: 'Token is required' });
+    
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Valid token is required' 
+      });
+    }
 
-    const user = await User.findOne({ loginToken: token });
-    if (!user) return res.status(401).json({ error: 'Invalid token' });
-
-    req.session.userId = user.discordId;
-    res.json({ 
-      id: user.discordId,
-      username: user.username,
-      avatar: user.avatar,
-      chips: user.chips,
-      dice: user.dice
+    // Find user by token and check if token is not older than 30 days
+    const user = await User.findOne({ 
+      loginToken: token.trim(),
+      tokenCreatedAt: { 
+        $gt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) 
+      }
     });
+
+    if (!user) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Invalid or expired token. Please generate a new one with /token command.' 
+      });
+    }
+
+    // Create session
+    req.session.userId = user.discordId;
+    
+    res.json({
+      success: true,
+      user: {
+        id: user.discordId,
+        username: user.username,
+        avatar: user.avatar,
+        chips: user.chips,
+        dice: user.dice
+      }
+    });
+    
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Login error:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error' 
+    });
   }
 });
 
-app.get('/auth/user', async (req, res) => {
-  if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
+// Auth Check Endpoint
+app.get('/auth/check', async (req, res) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ 
+      success: false,
+      error: 'Not authenticated' 
+    });
+  }
 
   try {
     const user = await User.findOne({ discordId: req.session.userId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found' 
+      });
+    }
     
     res.json({
-      id: user.discordId,
-      username: user.username,
-      avatar: user.avatar,
-      chips: user.chips,
-      dice: user.dice
+      success: true,
+      user: {
+        id: user.discordId,
+        username: user.username,
+        avatar: user.avatar,
+        chips: user.chips,
+        dice: user.dice
+      }
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Auth check error:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error' 
+    });
   }
 });
 
+// Logout Endpoint
 app.post('/auth/logout', (req, res) => {
   req.session.destroy(err => {
-    if (err) return res.status(500).json({ error: 'Logout failed' });
+    if (err) {
+      console.error('Logout error:', err);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Logout failed' 
+      });
+    }
     res.clearCookie('connect.sid');
-    res.sendStatus(200);
+    res.json({ 
+      success: true,
+      message: 'Logged out successfully' 
+    });
   });
 });
 

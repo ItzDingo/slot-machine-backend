@@ -27,29 +27,18 @@ const UserSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', UserSchema);
 
-// CORS Configuration
+// Middleware
 app.use(cors({
-  origin: function (origin, callback) {
-    const allowedOrigins = [
-      'https://itzdingo.github.io',
-      'https://itzdingo.github.io/slot-machine-frontend',
-      'http://localhost:5500'
-    ];
-    
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: [
+    'https://itzdingo.github.io',
+    'https://itzdingo.github.io/slot-machine-frontend',
+    'http://localhost:5500'
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
-  exposedHeaders: ['Content-Length', 'Authorization'],
-  maxAge: 86400
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-app.options('*', cors());
 app.use(express.json());
 
 // Session Configuration
@@ -57,36 +46,22 @@ app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: process.env.MONGODB_URI,
-    ttl: 24 * 60 * 60 // 1 day
-  }),
+  store: MongoStore.create({ mongoUrl: process.env.MONGODB_URI }),
   cookie: {
     secure: true,
     sameSite: 'none',
-    domain: '.onrender.com',
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-    httpOnly: true
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   }
 }));
-
-// Helper function to generate token
-function generateToken() {
-  return crypto.randomBytes(16).toString('hex');
-}
 
 // Auth Routes
 app.post('/auth/token', async (req, res) => {
   try {
     const { token } = req.body;
-    if (!token) {
-      return res.status(400).json({ error: 'Token is required' });
-    }
+    if (!token) return res.status(400).json({ error: 'Token is required' });
 
     const user = await User.findOne({ loginToken: token });
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
+    if (!user) return res.status(401).json({ error: 'Invalid token' });
 
     req.session.userId = user.discordId;
     res.json({ 
@@ -102,47 +77,38 @@ app.post('/auth/token', async (req, res) => {
 });
 
 app.get('/auth/user', async (req, res) => {
-  if (req.session.userId) {
-    try {
-      const user = await User.findOne({ discordId: req.session.userId });
-      if (user) {
-        res.json({
-          id: user.discordId,
-          username: user.username,
-          avatar: user.avatar,
-          chips: user.chips,
-          dice: user.dice
-        });
-      } else {
-        res.status(401).json({ error: 'User not found' });
-      }
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  } else {
-    res.status(401).json({ error: 'Not authenticated' });
+  if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
+
+  try {
+    const user = await User.findOne({ discordId: req.session.userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    res.json({
+      id: user.discordId,
+      username: user.username,
+      avatar: user.avatar,
+      chips: user.chips,
+      dice: user.dice
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
 app.post('/auth/logout', (req, res) => {
   req.session.destroy(err => {
-    if (err) {
-      return res.status(500).json({ error: 'Logout failed' });
-    }
+    if (err) return res.status(500).json({ error: 'Logout failed' });
     res.clearCookie('connect.sid');
     res.sendStatus(200);
   });
 });
 
-// Game API Routes (keep these the same as before)
+// Game API Routes
 app.get('/api/user/:id', async (req, res) => {
   try {
     const user = await User.findOne({ discordId: req.params.id });
-    if (user) {
-      res.json({ chips: user.chips, dice: user.dice });
-    } else {
-      res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ chips: user.chips, dice: user.dice });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

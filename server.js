@@ -29,8 +29,8 @@ const User = mongoose.model('User', userSchema);
 
 // Middleware
 const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  'http://localhost:5500'
+  'https://itzdingo.github.io/slot-machine-frontend',
+  'http://localhost:5500' // For local testing
 ];
 
 app.use(cors({

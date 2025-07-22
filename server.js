@@ -32,20 +32,29 @@ const allowedOrigins = [
   'http://localhost:5500'
 ];
 
+// Replace your existing CORS middleware with this:
 app.use(cors({
   origin: function (origin, callback) {
+    const allowedOrigins = [
+      'https://itzdingo.github.io',
+      'https://itzdingo.github.io/slot-machine-frontend',
+      'http://localhost:5500'
+    ];
+    
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.log('Blocked by CORS:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'], // Add Cache-Control here
+  exposedHeaders: ['Content-Length', 'Authorization'],
+  maxAge: 86400
 }));
 
+// Add this OPTIONS handler for all routes
 app.options('*', cors());
 app.use(express.json());
 

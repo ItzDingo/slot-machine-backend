@@ -39,12 +39,19 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
 
+// 1. CORS Middleware
 app.use(cors(corsOptions));
-
-// Handle preflight requests
 app.options('*', cors(corsOptions));
 
-// Additional headers middleware
+// 2. JSON Content-Type Enforcer
+app.use((req, res, next) => {
+  if (req.path.startsWith('/auth') || req.path.startsWith('/api')) {
+    res.header('Content-Type', 'application/json');
+  }
+  next();
+});
+
+// 3. Additional Security Headers
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Credentials', 'true');
@@ -55,7 +62,7 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// Session Configuration
+// 4. Session Configuration
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
@@ -64,18 +71,28 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 30 * 24 * 60 * 60 * 1000
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   }
 }));
+
+// Improved Error Handling Middleware
+app.use((err, req, res, next) => {
+  console.error('❌ Server Error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
 // Auth Routes
 app.post('/auth/token', async (req, res) => {
   try {
     const { token } = req.body;
-    if (!token) return res.status(400).json({ error: 'Token is required' });
+    if (!token) {
+      return res.status(400).json({ error: 'Token is required' });
+    }
 
     const user = await User.findOne({ loginToken: token });
-    if (!user) return res.status(401).json({ error: 'Invalid token' });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
 
     req.session.userId = user.discordId;
     res.json({ 
@@ -86,16 +103,21 @@ app.post('/auth/token', async (req, res) => {
       dice: user.dice
     });
   } catch (err) {
+    console.error('Token auth error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 app.get('/auth/user', async (req, res) => {
-  if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
 
   try {
     const user = await User.findOne({ discordId: req.session.userId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     
     res.json({
       id: user.discordId,
@@ -105,13 +127,17 @@ app.get('/auth/user', async (req, res) => {
       dice: user.dice
     });
   } catch (err) {
+    console.error('User fetch error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 app.post('/auth/logout', (req, res) => {
   req.session.destroy(err => {
-    if (err) return res.status(500).json({ error: 'Logout failed' });
+    if (err) {
+      console.error('Logout error:', err);
+      return res.status(500).json({ error: 'Logout failed' });
+    }
     res.clearCookie('connect.sid');
     res.sendStatus(200);
   });
@@ -121,9 +147,12 @@ app.post('/auth/logout', (req, res) => {
 app.get('/api/user/:id', async (req, res) => {
   try {
     const user = await User.findOne({ discordId: req.params.id });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     res.json({ chips: user.chips, dice: user.dice });
   } catch (err) {
+    console.error('User API error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -131,7 +160,9 @@ app.get('/api/user/:id', async (req, res) => {
 app.post('/api/daily/:id', async (req, res) => {
   try {
     const user = await User.findOne({ discordId: req.params.id });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     const now = new Date();
     if (user.lastDaily && (now - user.lastDaily) < 86400000) {
@@ -146,8 +177,13 @@ app.post('/api/daily/:id', async (req, res) => {
     user.lastDaily = now;
     await user.save();
 
-    res.json({ reward, newBalance: user.chips, nextDaily: new Date(now.getTime() + 86400000) });
+    res.json({ 
+      reward, 
+      newBalance: user.chips, 
+      nextDaily: new Date(now.getTime() + 86400000) 
+    });
   } catch (err) {
+    console.error('Daily reward error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -156,8 +192,12 @@ app.post('/api/spin', async (req, res) => {
   try {
     const { userId, cost } = req.body;
     const user = await User.findOne({ discordId: userId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    if (user.chips < cost) return res.status(400).json({ error: 'Not enough chips' });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (user.chips < cost) {
+      return res.status(400).json({ error: 'Not enough chips' });
+    }
 
     user.chips -= cost;
     user.lastSpin = new Date();
@@ -165,6 +205,7 @@ app.post('/api/spin', async (req, res) => {
 
     res.json({ success: true, newBalance: user.chips });
   } catch (err) {
+    console.error('Spin error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -173,13 +214,16 @@ app.post('/api/win', async (req, res) => {
   try {
     const { userId, amount } = req.body;
     const user = await User.findOne({ discordId: userId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     user.chips += amount;
     await user.save();
 
     res.json({ success: true, newBalance: user.chips });
   } catch (err) {
+    console.error('Win processing error:', err);
     res.status(500).json({ error: err.message });
   }
 });

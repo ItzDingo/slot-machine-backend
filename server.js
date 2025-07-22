@@ -112,7 +112,7 @@ passport.deserializeUser(async (id, done) => {
 app.get('/auth/discord', passport.authenticate('discord'));
 app.get('/auth/discord/callback', 
   passport.authenticate('discord', { 
-    failureRedirect: `${process.env.FRONTEND_URL}/?login_failed=true`,
+    failureRedirect: `${process.env.FRONTEND_URL}?login_failed=true`,
     successRedirect: process.env.FRONTEND_URL
   })
 );
@@ -127,7 +127,10 @@ app.get('/auth/user', (req, res) => {
       dice: req.user.dice
     });
   } else {
-    res.status(401).json({ error: 'Not authenticated' });
+    res.status(401).json({ 
+      error: 'Not authenticated',
+      message: 'Please login with Discord'
+    });
   }
 });
 

@@ -17,7 +17,7 @@ const UserSchema = new mongoose.Schema({
   discordId: { type: String, required: true, unique: true },
   username: { type: String, required: true },
   avatar: { type: String },
-  chips: { type: Number, default: 1000 },
+  chips: { type: Number, default: 30 },
   dice: { type: Number, default: 0 },
   lastDaily: { type: Date },
   lastSpin: { type: Date },

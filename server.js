@@ -7,53 +7,30 @@ const cors = require('cors');
 
 const app = express();
 
-// MongoDB Connection with improved error handling
+// MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI)
-.then(() => console.log('✅ Connected to MongoDB'))
-.catch(err => {
-  console.error('❌ MongoDB connection error:', err);
-  process.exit(1);
-});
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch(err => {
+    console.error('❌ MongoDB connection error:', err);
+    process.exit(1);
+  });
 
-// User Model with validation
+// User Model
 const UserSchema = new mongoose.Schema({
-  discordId: { 
-    type: String, 
-    required: [true, 'Discord ID is required'],
-    unique: true
-  },
-  username: { 
-    type: String, 
-    required: [true, 'Username is required'] 
-  },
+  discordId: { type: String, required: true, unique: true },
+  username: { type: String, required: true },
   avatar: { type: String },
-  chips: { 
-    type: Number, 
-    default: 1000,
-    min: [0, 'Chips cannot be negative']
-  },
-  dice: { 
-    type: Number, 
-    default: 0,
-    min: [0, 'Dice cannot be negative']
-  },
+  chips: { type: Number, default: 1000 },
+  dice: { type: Number, default: 0 },
   lastDaily: { type: Date },
   lastSpin: { type: Date },
-  loginToken: { 
-    type: String, 
-    unique: true,
-    index: true
-  },
-  tokenCreatedAt: {
-    type: Date,
-    default: Date.now,
-    expires: '30d' // Auto-expire tokens after 30 days
-  }
+  loginToken: { type: String, unique: true },
+  tokenCreatedAt: { type: Date, default: Date.now, expires: '30d' }
 });
 
 const User = mongoose.model('User', UserSchema);
 
-// Enhanced CORS Configuration
+// CORS Configuration
 const corsOptions = {
   origin: [
     'https://itzdingo.github.io',
@@ -63,267 +40,132 @@ const corsOptions = {
   ],
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  optionsSuccessStatus: 200
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
 
-// Middleware Setup
+// Middleware
 app.use(cors(corsOptions));
-
-// Handle preflight requests
 app.options('*', cors(corsOptions));
+app.use(express.json());
 
-// Force JSON responses for API routes
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api') || req.path.startsWith('/auth')) {
-    res.setHeader('Content-Type', 'application/json');
-  }
-  next();
-});
-
-// Improved body parsing with size limit
-app.use(express.json({ limit: '10kb' }));
-
-// Session Configuration with security enhancements
+// Session Configuration
 app.use(session({
-  name: 'slotMachine.sid',
+  name: 'slotmachine.sid',
   secret: process.env.SESSION_SECRET,
-  resave: false,
+  resave: true,
   saveUninitialized: false,
   store: MongoStore.create({
     mongoUrl: process.env.MONGODB_URI,
-    ttl: 30 * 24 * 60 * 60 // 30 days
+    ttl: 24 * 60 * 60
   }),
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     httpOnly: true,
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-    domain: process.env.NODE_ENV === 'production' ? '.yourdomain.com' : undefined
+    maxAge: 24 * 60 * 60 * 1000
   }
 }));
 
-// Rate limiting middleware
-app.use((req, res, next) => {
-  // Simple rate limiting for API routes
-  if (req.path.startsWith('/api')) {
-    // Implement your rate limiting logic here
-    // Example: 100 requests per minute per IP
-  }
-  next();
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'healthy',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Auth Routes with improved error handling
+// Auth Endpoints
 app.post('/auth/token', async (req, res) => {
   try {
     const { token } = req.body;
-    
-    if (!token || typeof token !== 'string') {
-      return res.status(400).json({ 
-        error: 'Invalid request',
-        message: 'Token is required and must be a string'
-      });
-    }
+    if (!token) return res.status(400).json({ error: 'Token required' });
 
-    const user = await User.findOne({ loginToken: token }).select('+loginToken');
-    
-    if (!user) {
-      return res.status(401).json({ 
-        error: 'Authentication failed',
-        message: 'Invalid or expired token'
-      });
-    }
-
-    // Check if token is expired (older than 30 days)
-    const tokenAge = Date.now() - new Date(user.tokenCreatedAt).getTime();
-    if (tokenAge > 30 * 24 * 60 * 60 * 1000) {
-      return res.status(401).json({
-        error: 'Authentication failed',
-        message: 'Token has expired'
-      });
-    }
+    const user = await User.findOne({ loginToken: token }).lean();
+    if (!user) return res.status(401).json({ error: 'Invalid token' });
 
     req.session.userId = user.discordId;
-    
-    res.status(200).json({
-      success: true,
-      data: {
-        id: user.discordId,
-        username: user.username,
-        avatar: user.avatar || null,
-        chips: user.chips,
-        dice: user.dice
-      }
+    res.json({
+      id: user.discordId,
+      username: user.username,
+      avatar: user.avatar || 'assets/default-avatar.png',
+      chips: user.chips || 1000,
+      dice: user.dice || 0
     });
-
   } catch (err) {
-    console.error('Token authentication error:', err);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: 'Could not process authentication request'
-    });
+    console.error('Auth error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
 app.get('/auth/user', async (req, res) => {
-  if (!req.session.userId) {
-    return res.status(401).json({
-      error: 'Unauthorized',
-      message: 'No active session found'
-    });
-  }
+  if (!req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const user = await User.findOne({ discordId: req.session.userId });
+    const user = await User.findOne({ discordId: req.session.userId }).lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
     
-    if (!user) {
-      return res.status(404).json({
-        error: 'Not found',
-        message: 'User account not found'
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        id: user.discordId,
-        username: user.username,
-        avatar: user.avatar || null,
-        chips: user.chips,
-        dice: user.dice
-      }
+    res.json({
+      id: user.discordId,
+      username: user.username,
+      avatar: user.avatar || 'assets/default-avatar.png',
+      chips: user.chips,
+      dice: user.dice
     });
-
   } catch (err) {
-    console.error('User session error:', err);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: 'Could not fetch user data'
-    });
+    console.error('User fetch error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
 app.post('/auth/logout', (req, res) => {
-  req.session.destroy((err) => {
+  req.session.destroy(err => {
     if (err) {
       console.error('Logout error:', err);
-      return res.status(500).json({
-        error: 'Logout failed',
-        message: 'Could not terminate session'
-      });
+      return res.status(500).json({ error: 'Logout failed' });
     }
-    
-    res.clearCookie('slotMachine.sid');
-    res.status(200).json({
-      success: true,
-      message: 'Successfully logged out'
-    });
+    res.clearCookie('slotmachine.sid');
+    res.sendStatus(200);
   });
 });
 
-// Game API Routes with validation
+// Game Endpoints
 app.post('/api/spin', async (req, res) => {
-  if (!req.session.userId) {
-    return res.status(401).json({
-      error: 'Unauthorized',
-      message: 'You must be logged in to play'
-    });
-  }
+  if (!req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const { cost } = req.body;
-    const numericCost = Number(cost);
-    
-    if (isNaN(numericCost)) {
-      return res.status(400).json({
-        error: 'Invalid request',
-        message: 'Spin cost must be a number'
-      });
-    }
+    const { userId, cost } = req.body;
+    if (userId !== req.session.userId) return res.status(403).json({ error: 'Forbidden' });
 
-    const user = await User.findOne({ discordId: req.session.userId });
-    
-    if (!user) {
-      return res.status(404).json({
-        error: 'Not found',
-        message: 'User account not found'
-      });
-    }
+    const user = await User.findOne({ discordId: userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.chips < cost) return res.status(400).json({ error: 'Not enough chips' });
 
-    if (user.chips < numericCost) {
-      return res.status(400).json({
-        error: 'Insufficient funds',
-        message: 'Not enough chips for this spin'
-      });
-    }
-
-    user.chips -= numericCost;
+    user.chips -= cost;
     user.lastSpin = new Date();
     await user.save();
 
-    res.status(200).json({
-      success: true,
-      data: {
-        newBalance: user.chips
-      }
-    });
-
+    res.json({ success: true, newBalance: user.chips });
   } catch (err) {
     console.error('Spin error:', err);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: 'Could not process spin'
-    });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-// ... [Include all other API routes with similar improvements] ...
+app.post('/api/win', async (req, res) => {
+  if (!req.session.userId) return res.status(401).json({ error: 'Unauthorized' });
 
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: 'An unexpected error occurred'
-  });
+  try {
+    const { userId, amount } = req.body;
+    if (userId !== req.session.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const user = await User.findOne({ discordId: userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    user.chips += amount;
+    await user.save();
+
+    res.json({ success: true, newBalance: user.chips });
+  } catch (err) {
+    console.error('Win error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Not found',
-    message: 'The requested resource was not found'
-  });
-});
-
-// Server startup
+// Server Start
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🛡️  CORS configured for: ${corsOptions.origin.join(', ')}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('🛑 Received SIGTERM. Shutting down gracefully...');
-  server.close(() => {
-    console.log('🔴 Server terminated');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('🛑 Received SIGINT. Shutting down gracefully...');
-  server.close(() => {
-    console.log('🔴 Server terminated');
-    process.exit(0);
-  });
+  console.log(`🛡️ CORS configured for: ${corsOptions.origin.join(', ')}`);
 });

@@ -245,7 +245,7 @@ app.post('/api/spin', async (req, res) => {
     const { cost } = req.body;
     const numericCost = Number(cost);
     
-    if (isNaN(numericCost) {
+    if (isNaN(numericCost)) {
       return res.status(400).json({
         error: 'Invalid request',
         message: 'Spin cost must be a number'

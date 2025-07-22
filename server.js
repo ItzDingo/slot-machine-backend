@@ -3,9 +3,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
-const passport = require('passport');
-const DiscordStrategy = require('passport-discord').Strategy;
 const cors = require('cors');
+const crypto = require('crypto');
 
 const app = express();
 
@@ -15,24 +14,20 @@ mongoose.connect(process.env.MONGODB_URI)
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
 // User Model
-const User = mongoose.model('User', new mongoose.Schema({
+const UserSchema = new mongoose.Schema({
   discordId: { type: String, required: true, unique: true },
   username: { type: String, required: true },
   avatar: { type: String },
   chips: { type: Number, default: 1000 },
   dice: { type: Number, default: 0 },
   lastDaily: { type: Date },
-  lastSpin: { type: Date }
-}));
+  lastSpin: { type: Date },
+  loginToken: { type: String, unique: true }
+});
+
+const User = mongoose.model('User', UserSchema);
 
 // CORS Configuration
-const allowedOrigins = [
-  'https://itzdingo.github.io',
-  'https://itzdingo.github.io/slot-machine-frontend',
-  'http://localhost:5500'
-];
-
-// Replace your existing CORS middleware with this:
 app.use(cors({
   origin: function (origin, callback) {
     const allowedOrigins = [
@@ -49,12 +44,11 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'], // Add Cache-Control here
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
   exposedHeaders: ['Content-Length', 'Authorization'],
   maxAge: 86400
 }));
 
-// Add this OPTIONS handler for all routes
 app.options('*', cors());
 app.use(express.json());
 
@@ -70,81 +64,77 @@ app.use(session({
   cookie: {
     secure: true,
     sameSite: 'none',
-    domain: '.onrender.com', // Note the leading dot for subdomains
-    maxAge: 24 * 60 * 60 * 1000,
+    domain: '.onrender.com',
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     httpOnly: true
   }
 }));
 
-app.use(passport.initialize());
-app.use(passport.session());
+// Helper function to generate token
+function generateToken() {
+  return crypto.randomBytes(16).toString('hex');
+}
 
-// Passport Configuration
-passport.use(new DiscordStrategy({
-  clientID: process.env.DISCORD_CLIENT_ID,
-  clientSecret: process.env.DISCORD_CLIENT_SECRET,
-  callbackURL: process.env.DISCORD_CALLBACK_URL,
-  scope: ['identify']
-}, async (accessToken, refreshToken, profile, done) => {
+// Auth Routes
+app.post('/auth/token', async (req, res) => {
   try {
-    const user = await User.findOneAndUpdate(
-      { discordId: profile.id },
-      { 
-        username: profile.username,
-        avatar: profile.avatar ? `https://cdn.discordapp.com/avatars/${profile.id}/${profile.avatar}.png` : null
-      },
-      { upsert: true, new: true }
-    );
-    done(null, user);
-  } catch (err) {
-    done(err);
-  }
-}));
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'Token is required' });
+    }
 
-passport.serializeUser((user, done) => done(null, user.id));
-passport.deserializeUser(async (id, done) => {
-  try {
-    const user = await User.findById(id);
-    done(null, user);
+    const user = await User.findOne({ loginToken: token });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    req.session.userId = user.discordId;
+    res.json({ 
+      id: user.discordId,
+      username: user.username,
+      avatar: user.avatar,
+      chips: user.chips,
+      dice: user.dice
+    });
   } catch (err) {
-    done(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Routes
-app.get('/auth/discord', passport.authenticate('discord'));
-app.get('/auth/discord/callback', 
-  passport.authenticate('discord', {
-    failureRedirect: `${process.env.FRONTEND_URL}?login_failed=true`,
-    successRedirect: `${process.env.FRONTEND_URL}?login_success=true`,
-    failureFlash: true
-  })
-);
-
-app.get('/auth/user', (req, res) => {
-  if (req.user) {
-    res.json({
-      id: req.user.discordId,
-      username: req.user.username,
-      avatar: req.user.avatar,
-      chips: req.user.chips,
-      dice: req.user.dice
-    });
+app.get('/auth/user', async (req, res) => {
+  if (req.session.userId) {
+    try {
+      const user = await User.findOne({ discordId: req.session.userId });
+      if (user) {
+        res.json({
+          id: user.discordId,
+          username: user.username,
+          avatar: user.avatar,
+          chips: user.chips,
+          dice: user.dice
+        });
+      } else {
+        res.status(401).json({ error: 'User not found' });
+      }
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   } else {
     res.status(401).json({ error: 'Not authenticated' });
   }
 });
 
 app.post('/auth/logout', (req, res) => {
-  req.logout(() => {
-    req.session.destroy(err => {
-      res.clearCookie('connect.sid');
-      res.sendStatus(200);
-    });
+  req.session.destroy(err => {
+    if (err) {
+      return res.status(500).json({ error: 'Logout failed' });
+    }
+    res.clearCookie('connect.sid');
+    res.sendStatus(200);
   });
 });
 
-// Game API Routes
+// Game API Routes (keep these the same as before)
 app.get('/api/user/:id', async (req, res) => {
   try {
     const user = await User.findOne({ discordId: req.params.id });

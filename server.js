@@ -65,13 +65,14 @@ app.use(session({
   saveUninitialized: false,
   store: MongoStore.create({
     mongoUrl: process.env.MONGODB_URI,
-    ttl: 24 * 60 * 60
+    ttl: 24 * 60 * 60 // 1 day
   }),
   cookie: {
     secure: true,
     sameSite: 'none',
+    domain: '.onrender.com', // Note the leading dot for subdomains
     maxAge: 24 * 60 * 60 * 1000,
-    domain: 'slot-machine-backend-34lg.onrender.com'
+    httpOnly: true
   }
 }));
 

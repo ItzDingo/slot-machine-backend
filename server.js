@@ -114,9 +114,10 @@ passport.deserializeUser(async (id, done) => {
 // Routes
 app.get('/auth/discord', passport.authenticate('discord'));
 app.get('/auth/discord/callback', 
-  passport.authenticate('discord', { 
+  passport.authenticate('discord', {
     failureRedirect: `${process.env.FRONTEND_URL}?login_failed=true`,
-    successRedirect: process.env.FRONTEND_URL
+    successRedirect: `${process.env.FRONTEND_URL}?login_success=true`,
+    failureFlash: true
   })
 );
 

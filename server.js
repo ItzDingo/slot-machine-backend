@@ -24,7 +24,21 @@ const UserSchema = new mongoose.Schema({
   loginToken: { type: String, unique: true }
 });
 
+// Mines Stats Model
+const MinesStatsSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  totalGames: { type: Number, default: 0 },
+  wins: { type: Number, default: 0 },
+  losses: { type: Number, default: 0 },
+  totalWins: { type: Number, default: 0 },
+  totalLosses: { type: Number, default: 0 },
+  totalGamesPlayed: { type: Number, default: 0 },
+  lastPlayed: { type: Date },
+  lastWin: { type: Date }
+});
+
 const User = mongoose.model('User', UserSchema);
+const MinesStats = mongoose.model('MinesStats', MinesStatsSchema);
 
 // CORS Configuration
 const corsOptions = {
@@ -169,6 +183,101 @@ app.post('/api/win', async (req, res) => {
     await user.save();
 
     res.json({ success: true, newBalance: user.chips });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mines Game Routes
+app.get('/api/mines/stats', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+    const stats = await MinesStats.findOne({ userId }) || {
+      userId,
+      totalGames: 0,
+      wins: 0,
+      losses: 0,
+      totalWins: 0,
+      totalLosses: 0,
+      totalGamesPlayed: 0
+    };
+
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/mines/start', async (req, res) => {
+  try {
+    const { userId, betAmount, minesCount } = req.body;
+    if (!userId || !betAmount || !minesCount) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    await MinesStats.updateOne(
+      { userId },
+      { 
+        $inc: { totalGamesPlayed: 1 },
+        $set: { lastPlayed: new Date() }
+      },
+      { upsert: true }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/mines/win', async (req, res) => {
+  try {
+    const { userId, amount, minesCount, revealedCells } = req.body;
+    if (!userId || !amount) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    await MinesStats.updateOne(
+      { userId },
+      { 
+        $inc: { 
+          wins: 1,
+          totalWins: amount,
+          totalGames: 1
+        },
+        $set: { lastWin: new Date() }
+      },
+      { upsert: true }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/mines/loss', async (req, res) => {
+  try {
+    const { userId, amount, minesCount, revealedCells } = req.body;
+    if (!userId || !amount) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    await MinesStats.updateOne(
+      { userId },
+      { 
+        $inc: { 
+          losses: 1,
+          totalLosses: amount,
+          totalGames: 1
+        }
+      },
+      { upsert: true }
+    );
+
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

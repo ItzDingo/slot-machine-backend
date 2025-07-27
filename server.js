@@ -41,7 +41,7 @@ const User = mongoose.model('User', UserSchema);
 const MinesStats = mongoose.model('MinesStats', MinesStatsSchema);
 
 // CORS Configuration
-app.use(cors({
+const corsOptions = {
   origin: [
     'https://itzdingo.github.io',
     'https://itzdingo.github.io/slot-machine-frontend',
@@ -49,11 +49,13 @@ app.use(cors({
     'http://127.0.0.1:5500'
   ],
   credentials: true,
-  exposedHeaders: ['set-cookie']
-}));
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+};
 
+// Then use it here
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.options('*', cors(corsOptions)); // Keep this after
 
 // Session Middleware with critical fixes
 app.use(session({

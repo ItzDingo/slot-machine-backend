@@ -12,6 +12,16 @@ mongoose.connect(process.env.MONGODB_URI)
 .then(() => console.log('✅ Connected to MongoDB'))
 .catch(err => console.error('❌ MongoDB connection error:', err));
 
+// Inventory Item Subdocument Schema
+const InventoryItemSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  img: { type: String, required: true },
+  rarity: { type: String, required: true, enum: ['common', 'uncommon', 'epic', 'legendary', 'mythic'] },
+  value: { type: Number, required: true },
+  quantity: { type: Number, default: 1 },
+  obtainedAt: { type: Date, default: Date.now }
+});
+
 // User Model
 const UserSchema = new mongoose.Schema({
   discordId: { type: String, required: true, unique: true },
@@ -21,7 +31,8 @@ const UserSchema = new mongoose.Schema({
   dice: { type: Number, default: 0 },
   lastDaily: { type: Date },
   lastSpin: { type: Date },
-  loginToken: { type: String, unique: true }
+  loginToken: { type: String, unique: true },
+  inventory: [InventoryItemSchema] // Add inventory array
 });
 
 // Mines Stats Model
@@ -87,7 +98,8 @@ app.post('/auth/token', async (req, res) => {
       username: user.username,
       avatar: user.avatar,
       chips: user.chips,
-      dice: user.dice
+      dice: user.dice,
+      inventory: user.inventory || []
     });
   } catch (err) {
     console.error('Token auth error:', err);
@@ -107,7 +119,8 @@ app.get('/auth/user', async (req, res) => {
       username: user.username,
       avatar: user.avatar,
       chips: user.chips,
-      dice: user.dice
+      dice: user.dice,
+      inventory: user.inventory || []
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -184,6 +197,91 @@ app.post('/api/win', async (req, res) => {
     await user.save();
 
     res.json({ success: true, newBalance: user.chips });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Inventory Routes
+app.get('/api/inventory', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+    const user = await User.findOne({ discordId: userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    res.json({ items: user.inventory || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/inventory/add', async (req, res) => {
+  try {
+    const { userId, item } = req.body;
+    if (!userId || !item) return res.status(400).json({ error: 'Missing required fields' });
+
+    const user = await User.findOne({ discordId: userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Check if item already exists in inventory
+    const existingItem = user.inventory.find(i => i.name === item.name);
+    if (existingItem) {
+      // Increment quantity if item exists
+      existingItem.quantity += 1;
+    } else {
+      // Add new item to inventory
+      user.inventory.push({
+        name: item.name,
+        img: item.img,
+        rarity: item.rarity,
+        value: item.value || 0,
+        quantity: 1
+      });
+    }
+
+    await user.save();
+    res.json({ success: true, inventory: user.inventory });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/inventory/sell', async (req, res) => {
+  try {
+    const { userId, itemName, quantity, totalValue } = req.body;
+    if (!userId || !itemName || !quantity || !totalValue) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const user = await User.findOne({ discordId: userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const itemIndex = user.inventory.findIndex(i => i.name === itemName);
+    if (itemIndex === -1) return res.status(404).json({ error: 'Item not found in inventory' });
+
+    const item = user.inventory[itemIndex];
+    if (item.quantity < quantity) {
+      return res.status(400).json({ error: 'Not enough quantity to sell' });
+    }
+
+    // Update user's chips
+    user.chips += totalValue;
+
+    // Update or remove item from inventory
+    if (item.quantity > quantity) {
+      item.quantity -= quantity;
+    } else {
+      user.inventory.splice(itemIndex, 1);
+    }
+
+    await user.save();
+    res.json({ 
+      success: true, 
+      newBalance: user.chips,
+      inventory: user.inventory
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

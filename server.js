@@ -115,10 +115,10 @@ const isCaseActive = async (caseId) => {
 const initializeLimitedCases = async () => {
     const cases = [
         {
-            caseId: 'PLACE HOLDER',
-            name: 'PLACE HOLDER',
-            startTime: new Date('2025-08-01T00:00:00Z'), // Note the 'Z' for UTC
-            endTime: new Date('2025-08-15T23:59:59Z')
+            caseId: 'case3',
+            name: 'Predatory Cobra',
+            startTime: new Date('2025-08-02T00:00:00Z'), // Note the 'Z' for UTC
+            endTime: new Date('2025-08-05T02:00:00Z')
         }
     ];
 

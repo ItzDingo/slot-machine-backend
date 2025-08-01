@@ -113,20 +113,20 @@ const isCaseActive = async (caseId) => {
 
 // Initialize limited cases (run once on server start)
 const initializeLimitedCases = async () => {
-  const cases = [
-    {
-      caseId: 'case1',
-      name: 'Dreams & Nightmares Case',
-      startTime: new Date('2025-08-01T00:00:00'),
-      endTime: new Date('2025-08-15T23:59:59')
-    },
-    {
-      caseId: 'case2',
-      name: 'Recoil Case',
-      startTime: new Date('2025-07-30T00:00:00'),
-      endTime: new Date('2025-08-01T02:00:00')
-    }
-  ];
+    const cases = [
+        {
+            caseId: 'case1',
+            name: 'Dreams & Nightmares Case',
+            startTime: new Date('2025-08-01T00:00:00Z'), // Note the 'Z' for UTC
+            endTime: new Date('2025-08-15T23:59:59Z')
+        },
+        {
+            caseId: 'case2',
+            name: 'Recoil Case', 
+            startTime: new Date('2025-07-30T00:00:00Z'),
+            endTime: new Date('2025-08-01T03:00:00Z')
+        }
+    ];
 
   for (const caseData of cases) {
     try {
@@ -143,6 +143,7 @@ const initializeLimitedCases = async () => {
 
 // Run initialization
 initializeLimitedCases();
+
 
 // Auth Routes
 app.post('/auth/token', async (req, res) => {
@@ -242,6 +243,48 @@ app.post('/api/daily/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+
+
+app.get('/api/cases/validate', async (req, res) => {
+    try {
+        const now = new Date();
+        const cases = await LimitedCase.find({});
+        
+        const validatedCases = cases.map(caseData => ({
+            caseId: caseData.caseId,
+            name: caseData.name,
+            isActive: now >= caseData.startTime && now < caseData.endTime,
+            serverTime: now, // Send server time for client verification
+            timeRemaining: Math.max(0, caseData.endTime - now)
+        }));
+
+        res.json({ cases: validatedCases });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/cases/validate-spin', async (req, res) => {
+    try {
+        const { caseId } = req.body;
+        if (!caseId) return res.status(400).json({ error: 'caseId required' });
+        
+        const now = new Date();
+        const caseData = await LimitedCase.findOne({ caseId });
+        
+        if (!caseData) {
+            return res.status(404).json({ valid: false, error: 'Case not found' });
+        }
+        
+        res.json({ 
+            valid: now >= caseData.startTime && now < caseData.endTime,
+            serverTime: now
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.post('/api/spin', async (req, res) => {

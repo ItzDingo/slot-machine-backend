@@ -300,8 +300,14 @@ app.post('/api/spin', async (req, res) => {
         return res.status(400).json({ error: 'No instant spins remaining' });
       }
       
-      // Deduct one instant spin
+      // Check if user has enough chips for the case cost
+      if (user.chips < cost) {
+        return res.status(400).json({ error: 'Not enough chips' });
+      }
+      
+      // Deduct one instant spin AND the case cost
       user.instantSpins.remaining -= 1;
+      user.chips -= cost;
     } else {
       // Regular spin - check chips
       if (user.chips < cost) {

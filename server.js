@@ -124,7 +124,7 @@ const initializeLimitedCases = async () => {
             caseId: 'case2',
             name: 'Recoil Case', 
             startTime: new Date('2025-07-30T00:00:00Z'),
-            endTime: new Date('2025-08-01T03:00:00Z')
+            endTime: new Date('2025-07-01T03:00:00Z')
         }
     ];
 

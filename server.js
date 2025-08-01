@@ -23,6 +23,7 @@ const InventoryItemSchema = new mongoose.Schema({
 });
 
 // User Model
+// Update the UserSchema to include instant spin tracking
 const UserSchema = new mongoose.Schema({
   discordId: { type: String, required: true, unique: true },
   username: { type: String, required: true },
@@ -32,7 +33,11 @@ const UserSchema = new mongoose.Schema({
   lastDaily: { type: Date },
   lastSpin: { type: Date },
   loginToken: { type: String, unique: true },
-  inventory: [InventoryItemSchema] // Add inventory array
+  inventory: [InventoryItemSchema],
+  // Add these new fields for instant spins
+  instantSpinsUsed: { type: Number, default: 0 },
+  instantSpinLimit: { type: Number, default: 25 },
+  lastRefillTime: { type: Date }
 });
 
 // Mines Stats Model
@@ -83,7 +88,33 @@ app.use(session({
 
 app.use(express.json());
 
+
+// Add this middleware to check for daily reset
+app.use(async (req, res, next) => {
+  try {
+    if (req.session.userId) {
+      const user = await User.findOne({ discordId: req.session.userId });
+      if (user) {
+        const now = new Date();
+        const lastRefillDay = user.lastRefillTime ? new Date(user.lastRefillTime).toDateString() : null;
+        const currentDay = now.toDateString();
+        
+        if (!lastRefillDay || lastRefillDay !== currentDay) {
+          user.instantSpinsUsed = 0;
+          user.lastRefillTime = now;
+          await user.save();
+        }
+      }
+    }
+    next();
+  } catch (err) {
+    console.error('Daily reset middleware error:', err);
+    next();
+  }
+});
+
 // Auth Routes
+// Update the /auth/token endpoint response
 app.post('/auth/token', async (req, res) => {
   try {
     const { token } = req.body;
@@ -99,7 +130,12 @@ app.post('/auth/token', async (req, res) => {
       avatar: user.avatar,
       chips: user.chips,
       dice: user.dice,
-      inventory: user.inventory || []
+      inventory: user.inventory || [],
+      instantSpins: {
+        used: user.instantSpinsUsed,
+        limit: user.instantSpinLimit,
+        remaining: user.instantSpinLimit - user.instantSpinsUsed
+      }
     });
   } catch (err) {
     console.error('Token auth error:', err);
@@ -107,6 +143,7 @@ app.post('/auth/token', async (req, res) => {
   }
 });
 
+// Update the /auth/user endpoint response
 app.get('/auth/user', async (req, res) => {
   if (!req.session.userId) return res.status(401).json({ error: 'Not authenticated' });
 
@@ -120,7 +157,12 @@ app.get('/auth/user', async (req, res) => {
       avatar: user.avatar,
       chips: user.chips,
       dice: user.dice,
-      inventory: user.inventory || []
+      inventory: user.inventory || [],
+      instantSpins: {
+        used: user.instantSpinsUsed,
+        limit: user.instantSpinLimit,
+        remaining: user.instantSpinLimit - user.instantSpinsUsed
+      }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -182,6 +224,82 @@ app.post('/api/spin', async (req, res) => {
     await user.save();
 
     res.json({ success: true, newBalance: user.chips });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// Add these new routes after your existing game API routes
+
+// Get current instant spin status
+app.get('/api/instant-spins', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+    const user = await User.findOne({ discordId: userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    res.json({
+      used: user.instantSpinsUsed,
+      limit: user.instantSpinLimit,
+      remaining: user.instantSpinLimit - user.instantSpinsUsed,
+      lastRefill: user.lastRefillTime
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Increment instant spin counter
+app.post('/api/instant-spins/use', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+    const user = await User.findOne({ discordId: userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    user.instantSpinsUsed += 1;
+    await user.save();
+
+    res.json({
+      success: true,
+      used: user.instantSpinsUsed,
+      remaining: user.instantSpinLimit - user.instantSpinsUsed
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Refill instant spins
+app.post('/api/instant-spins/refill', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+    const user = await User.findOne({ discordId: userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const refillCost = Math.floor(user.chips * 0.1);
+    if (user.chips < refillCost) {
+      return res.status(400).json({ error: 'Not enough chips for refill' });
+    }
+
+    user.chips -= refillCost;
+    user.instantSpinsUsed = 0;
+    user.lastRefillTime = new Date();
+    await user.save();
+
+    res.json({
+      success: true,
+      newBalance: user.chips,
+      used: user.instantSpinsUsed,
+      remaining: user.instantSpinLimit - user.instantSpinsUsed,
+      cost: refillCost
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

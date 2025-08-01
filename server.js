@@ -246,16 +246,35 @@ app.post('/api/daily/:id', async (req, res) => {
 
 app.post('/api/spin', async (req, res) => {
   try {
-    const { userId, cost } = req.body;
+    const { userId, cost, isInstantSpin } = req.body;
     const user = await User.findOne({ discordId: userId });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    if (user.chips < cost) return res.status(400).json({ error: 'Not enough chips' });
+    
+    // Check if it's an instant spin
+    if (isInstantSpin) {
+      // Check if spins are available
+      if (user.instantSpins.remaining <= 0) {
+        return res.status(400).json({ error: 'No instant spins remaining' });
+      }
+      
+      // Deduct one instant spin
+      user.instantSpins.remaining -= 1;
+    } else {
+      // Regular spin - check chips
+      if (user.chips < cost) {
+        return res.status(400).json({ error: 'Not enough chips' });
+      }
+      user.chips -= cost;
+    }
 
-    user.chips -= cost;
     user.lastSpin = new Date();
     await user.save();
 
-    res.json({ success: true, newBalance: user.chips, instantSpins: user.instantSpins });
+    res.json({ 
+      success: true, 
+      newBalance: user.chips,
+      instantSpins: user.instantSpins
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

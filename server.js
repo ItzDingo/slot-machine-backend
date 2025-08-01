@@ -19,8 +19,18 @@ const InventoryItemSchema = new mongoose.Schema({
   rarity: { type: String, required: true, enum: ['common', 'uncommon', 'epic', 'legendary', 'mythic', 'exclusive', 'limited'] },
   value: { type: Number, required: true },
   quantity: { type: Number, default: 1 },
+  maxQuantity: { type: Number, default: null }, // Add this for global limits
   obtainedAt: { type: Date, default: Date.now }
 });
+
+const LimitedItemSchema = new mongoose.Schema({
+  itemName: { type: String, required: true, unique: true },
+  maxQuantity: { type: Number, required: true },
+  currentQuantity: { type: Number, default: 0 },
+  caseId: { type: String, required: true }
+});
+
+const LimitedItem = mongoose.model('LimitedItem', LimitedItemSchema);
 
 // Limited Case Schema
 const LimitedCaseSchema = new mongoose.Schema({
@@ -116,7 +126,7 @@ const initializeLimitedCases = async () => {
     const cases = [
         {
             caseId: 'case3',
-            name: 'Predatory Cobra',
+            name: 'Predatory Cobra [LIMITED]',
             startTime: new Date('2025-08-03T00:00:00Z'), // Keep UTC time
             endTime: new Date('2025-08-05T02:00:00Z')
         }
@@ -239,6 +249,9 @@ app.post('/api/daily/:id', async (req, res) => {
   }
 });
 
+
+
+// In server.js
 app.get('/api/cases/validate', async (req, res) => {
     try {
         const now = new Date();
@@ -274,6 +287,71 @@ app.post('/api/cases/validate-spin', async (req, res) => {
             valid: now >= caseData.startTime && now < caseData.endTime,
             serverTime: now
         });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/items/check-availability', async (req, res) => {
+    try {
+        const { itemName } = req.query;
+        if (!itemName) return res.status(400).json({ error: 'Item name is required' });
+
+        const limitedItem = await LimitedItem.findOne({ itemName });
+        if (!limitedItem) return res.json({ available: true }); // No limit if not in LimitedItem collection
+
+        if (limitedItem.currentQuantity >= limitedItem.maxQuantity) {
+            return res.json({ 
+                available: false,
+                maxQuantity: limitedItem.maxQuantity,
+                currentQuantity: limitedItem.currentQuantity
+            });
+        }
+
+        res.json({ available: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get all limited items
+app.get('/api/admin/limited-items', async (req, res) => {
+    try {
+        const items = await LimitedItem.find({});
+        res.json(items);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Update limited item quantity
+app.post('/api/admin/limited-items/update', async (req, res) => {
+    try {
+        const { itemName, maxQuantity } = req.body;
+        if (!itemName || maxQuantity === undefined) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        const item = await LimitedItem.findOneAndUpdate(
+            { itemName },
+            { maxQuantity },
+            { new: true, upsert: true }
+        );
+
+        res.json(item);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Remove quantity limit from an item
+app.post('/api/admin/limited-items/remove-limit', async (req, res) => {
+    try {
+        const { itemName } = req.body;
+        if (!itemName) return res.status(400).json({ error: 'Item name is required' });
+
+        await LimitedItem.deleteOne({ itemName });
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -408,73 +486,98 @@ app.get('/api/inventory', async (req, res) => {
 });
 
 app.post('/api/inventory/add', async (req, res) => {
-  try {
-    const { userId, item } = req.body;
-    if (!userId || !item) return res.status(400).json({ error: 'Missing required fields' });
+    try {
+        const { userId, item } = req.body;
+        if (!userId || !item) return res.status(400).json({ error: 'Missing required fields' });
 
-    const user = await User.findOne({ discordId: userId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+        const user = await User.findOne({ discordId: userId });
+        if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Check if item already exists in inventory
-    const existingItem = user.inventory.find(i => i.name === item.name);
-    if (existingItem) {
-      // Increment quantity if item exists
-      existingItem.quantity += 1;
-    } else {
-      // Add new item to inventory
-      user.inventory.push({
-        name: item.name,
-        img: item.img,
-        rarity: item.rarity,
-        value: item.value || 0,
-        quantity: 1
-      });
+        // Check if item has a global limit
+        const limitedItem = await LimitedItem.findOne({ itemName: item.name });
+        if (limitedItem) {
+            if (limitedItem.currentQuantity >= limitedItem.maxQuantity) {
+                return res.status(400).json({ error: 'Maximum global quantity reached for this item' });
+            }
+            
+            // Increment global count
+            limitedItem.currentQuantity += 1;
+            await limitedItem.save();
+        }
+
+        // Check if item already exists in inventory
+        const existingItem = user.inventory.find(i => i.name === item.name);
+        if (existingItem) {
+            // Check if user has reached personal limit
+            if (item.quantity && existingItem.quantity >= item.quantity) {
+                return res.status(400).json({ error: 'You already have the maximum quantity of this item' });
+            }
+            
+            // Increment quantity if item exists
+            existingItem.quantity += 1;
+        } else {
+            // Add new item to inventory
+            user.inventory.push({
+                name: item.name,
+                img: item.img,
+                rarity: item.rarity,
+                value: item.value || 0,
+                quantity: 1,
+                maxQuantity: item.quantity || null
+            });
+        }
+
+        await user.save();
+        res.json({ success: true, inventory: user.inventory });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    await user.save();
-    res.json({ success: true, inventory: user.inventory });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 app.post('/api/inventory/sell', async (req, res) => {
-  try {
-    const { userId, itemName, quantity, totalValue } = req.body;
-    if (!userId || !itemName || !quantity || !totalValue) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    try {
+        const { userId, itemName, quantity, totalValue } = req.body;
+        if (!userId || !itemName || !quantity || !totalValue) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        const user = await User.findOne({ discordId: userId });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        const itemIndex = user.inventory.findIndex(i => i.name === itemName);
+        if (itemIndex === -1) return res.status(404).json({ error: 'Item not found in inventory' });
+
+        const item = user.inventory[itemIndex];
+        if (item.quantity < quantity) {
+            return res.status(400).json({ error: 'Not enough quantity to sell' });
+        }
+
+        // Update user's chips
+        user.chips += totalValue;
+
+        // Decrement global count if this is a limited item
+        const limitedItem = await LimitedItem.findOne({ itemName });
+        if (limitedItem) {
+            limitedItem.currentQuantity = Math.max(0, limitedItem.currentQuantity - quantity);
+            await limitedItem.save();
+        }
+
+        // Update or remove item from inventory
+        if (item.quantity > quantity) {
+            item.quantity -= quantity;
+        } else {
+            user.inventory.splice(itemIndex, 1);
+        }
+
+        await user.save();
+        res.json({ 
+            success: true, 
+            newBalance: user.chips,
+            inventory: user.inventory
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    const user = await User.findOne({ discordId: userId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const itemIndex = user.inventory.findIndex(i => i.name === itemName);
-    if (itemIndex === -1) return res.status(404).json({ error: 'Item not found in inventory' });
-
-    const item = user.inventory[itemIndex];
-    if (item.quantity < quantity) {
-      return res.status(400).json({ error: 'Not enough quantity to sell' });
-    }
-
-    // Update user's chips
-    user.chips += totalValue;
-
-    // Update or remove item from inventory
-    if (item.quantity > quantity) {
-      item.quantity -= quantity;
-    } else {
-      user.inventory.splice(itemIndex, 1);
-    }
-
-    await user.save();
-    res.json({ 
-      success: true, 
-      newBalance: user.chips,
-      inventory: user.inventory
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 // Mines Game Routes

@@ -117,7 +117,7 @@ const initializeLimitedCases = async () => {
         {
             caseId: 'case3',
             name: 'Predatory Cobra',
-            startTime: new Date('2025-08-02T00:00:00Z'), // Keep UTC time
+            startTime: new Date('2025-07-02T00:00:00Z'), // Keep UTC time
             endTime: new Date('2025-08-05T02:00:00Z')
         }
     ];

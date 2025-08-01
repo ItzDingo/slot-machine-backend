@@ -239,8 +239,6 @@ app.post('/api/daily/:id', async (req, res) => {
   }
 });
 
-
-
 app.get('/api/cases/validate', async (req, res) => {
     try {
         const now = new Date();
@@ -250,7 +248,7 @@ app.get('/api/cases/validate', async (req, res) => {
             caseId: caseData.caseId,
             name: caseData.name,
             isActive: now >= caseData.startTime && now < caseData.endTime,
-            serverTime: now, // Send server time for client verification
+            serverTime: now.toISOString(), // Return as ISO string
             timeRemaining: Math.max(0, caseData.endTime - now)
         }));
 

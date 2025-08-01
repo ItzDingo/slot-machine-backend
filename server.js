@@ -117,22 +117,22 @@ const initializeLimitedCases = async () => {
         {
             caseId: 'case3',
             name: 'Predatory Cobra',
-            startTime: new Date('2025-08-02T00:00:00Z'), // Note the 'Z' for UTC
+            startTime: new Date('2025-08-02T00:00:00Z'), // Keep UTC time
             endTime: new Date('2025-08-05T02:00:00Z')
         }
     ];
 
-  for (const caseData of cases) {
-    try {
-      await LimitedCase.updateOne(
-        { caseId: caseData.caseId },
-        { $set: caseData },
-        { upsert: true }
-      );
-    } catch (err) {
-      console.error(`Error initializing case ${caseData.caseId}:`, err);
+    for (const caseData of cases) {
+        try {
+            await LimitedCase.updateOne(
+                { caseId: caseData.caseId },
+                { $set: caseData },
+                { upsert: true }
+            );
+        } catch (err) {
+            console.error(`Error initializing case ${caseData.caseId}:`, err);
+        }
     }
-  }
 };
 
 // Run initialization

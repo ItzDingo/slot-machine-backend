@@ -127,7 +127,7 @@ const initializeLimitedCases = async () => {
         {
             caseId: 'case3',
             name: 'Predatory Cobra [LIMITED]',
-            startTime: new Date('2025-08-02T16:00:00Z'), // Keep UTC time
+            startTime: new Date('2025-08-03T00:00:00Z'), // Keep UTC time
             endTime: new Date('2025-08-04T15:00:00Z')
         }
     ];
@@ -359,10 +359,24 @@ app.post('/api/admin/limited-items/remove-limit', async (req, res) => {
 
 app.post('/api/spin', async (req, res) => {
   try {
-    const { userId, cost, isInstantSpin } = req.body;
+    const { userId, cost, isInstantSpin, caseId } = req.body;
     const user = await User.findOne({ discordId: userId });
     if (!user) return res.status(404).json({ error: 'User not found' });
     
+    // Check if it's a limited case and validate its status
+    if (caseId) {
+      const caseData = await LimitedCase.findOne({ caseId });
+      if (caseData) {
+        const now = new Date();
+        if (now >= caseData.endTime) {
+          return res.status(400).json({ 
+            error: 'This limited case has expired',
+            caseExpired: true
+          });
+        }
+      }
+    }
+
     // Check if it's an instant spin
     if (isInstantSpin) {
       // Check if spins are available
@@ -399,6 +413,7 @@ app.post('/api/spin', async (req, res) => {
   }
 });
 
+
 app.post('/api/win', async (req, res) => {
   try {
     const { userId, amount } = req.body;
@@ -417,9 +432,23 @@ app.post('/api/win', async (req, res) => {
 // Instant Spins Routes
 app.post('/api/instant-spins/use', async (req, res) => {
   try {
-    const { userId } = req.body;
+    const { userId, caseId } = req.body;
     const user = await User.findOne({ discordId: userId });
     if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Check if it's a limited case and validate its status
+    if (caseId) {
+      const caseData = await LimitedCase.findOne({ caseId });
+      if (caseData) {
+        const now = new Date();
+        if (now >= caseData.endTime) {
+          return res.status(400).json({ 
+            error: 'This limited case has expired',
+            caseExpired: true
+          });
+        }
+      }
+    }
 
     // Check if it's a new day for spin reset
     const now = new Date();
@@ -720,7 +749,3 @@ app.get('/api/cases/:caseId/status', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
-
-
-

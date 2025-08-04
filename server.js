@@ -806,34 +806,40 @@ app.post('/api/mines/win', async (req, res) => {
 
 app.post('/api/mines/loss', async (req, res) => {
   try {
-    const { userId, amount, minesCount, revealedCells } = req.body;
+    const { userId, amount } = req.body; // amount is the full bet amount
     
-    // Calculate 99% of the bet amount (amount is the full bet)
-    const amountToLose = amount * 0.99;
+    // Calculate how much to subtract (99% of the bet)
+    const amountToSubtract = amount * 0.99;
+    const amountKept = amount * 0.01;
     
     const session = await mongoose.startSession();
     session.startTransaction();
     
     try {
-      // Update user balance - subtract only 99% of the bet
-      const user = await User.findOneAndUpdate(
-        { discordId: userId },
-        { $inc: { chips: -amountToLose } },
-        { new: true, session }
-      );
-
+      // Get current user balance first
+      const user = await User.findOne({ discordId: userId }).session(session);
       if (!user) {
         await session.abortTransaction();
         return res.status(404).json({ error: 'User not found' });
       }
 
-      // Update stats with the actual amount lost (99%)
+      // Verify they have enough balance (should have been checked before)
+      if (user.chips < amountToSubtract) {
+        await session.abortTransaction();
+        return res.status(400).json({ error: 'Insufficient balance' });
+      }
+
+      // Update user balance (subtract only 99%)
+      user.chips -= amountToSubtract;
+      await user.save({ session });
+
+      // Update stats
       await MinesStats.updateOne(
         { userId },
         { 
           $inc: { 
             losses: 1,
-            totalLosses: amountToLose,
+            totalLosses: amountToSubtract,
             totalGames: 1
           }
         },
@@ -841,11 +847,12 @@ app.post('/api/mines/loss', async (req, res) => {
       );
 
       await session.commitTransaction();
+      
       res.json({ 
         success: true, 
         newBalance: user.chips,
-        amountLost: amountToLose,
-        amountKept: amount * 0.01 // 1% kept
+        amountLost: amountToSubtract,
+        amountKept: amountKept
       });
     } catch (transactionError) {
       await session.abortTransaction();
@@ -903,4 +910,3 @@ app.get('/api/cases/:caseId/status', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-

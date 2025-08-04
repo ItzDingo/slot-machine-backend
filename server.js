@@ -806,35 +806,26 @@ app.post('/api/mines/win', async (req, res) => {
 
 app.post('/api/mines/loss', async (req, res) => {
   try {
-    const { userId, amount, keptAmount } = req.body;
-    if (!userId || amount === undefined || keptAmount === undefined) {
-      return res.status(400).json({ 
-        error: 'Missing required fields',
-        code: 'MISSING_FIELDS'
-      });
-    }
-
+    const { userId, amount, minesCount, revealedCells } = req.body;
+    
+    // Calculate the amount to keep (1% of original bet)
+    const originalBet = amount / 0.99; // Reverse calculate original bet from 99% loss
+    const amountToKeep = originalBet * 0.01; // 1% of original bet
+    
     const session = await mongoose.startSession();
     session.startTransaction();
     
     try {
-      // Update user balance (subtract lost amount but add kept amount)
-      const updatedUser = await User.findOneAndUpdate(
+      // Update user balance - we only subtract the 99% loss
+      const user = await User.findOneAndUpdate(
         { discordId: userId },
-        { 
-          $inc: { 
-            chips: keptAmount - amount // This effectively subtracts (amount - keptAmount)
-          } 
-        },
+        { $inc: { chips: -amount } }, // Only subtract the lost amount (99%)
         { new: true, session }
       );
 
-      if (!updatedUser) {
+      if (!user) {
         await session.abortTransaction();
-        return res.status(404).json({ 
-          error: 'User not found',
-          code: 'USER_NOT_FOUND'
-        });
+        return res.status(404).json({ error: 'User not found' });
       }
 
       // Update stats
@@ -853,9 +844,10 @@ app.post('/api/mines/loss', async (req, res) => {
       await session.commitTransaction();
       res.json({ 
         success: true, 
-        newBalance: updatedUser.chips,
+        newBalance: user.chips,
         amountLost: amount,
-        amountKept: keptAmount
+        amountKept: amountToKeep,
+        originalBet: originalBet
       });
     } catch (transactionError) {
       await session.abortTransaction();
@@ -864,11 +856,7 @@ app.post('/api/mines/loss', async (req, res) => {
       session.endSession();
     }
   } catch (err) {
-    console.error('Mines loss error:', err);
-    res.status(500).json({ 
-      error: err.message || 'Internal server error',
-      code: 'INTERNAL_ERROR'
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 

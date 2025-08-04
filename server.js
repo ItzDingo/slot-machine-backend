@@ -121,8 +121,11 @@ const isCaseActive = async (caseId) => {
   }
 };
 
-// Initialize limited cases (run once on server start)
 const initializeLimitedCases = async () => {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
     const cases = [
         {
             caseId: 'case3',
@@ -271,21 +274,33 @@ app.get('/api/cases/validate', async (req, res) => {
     }
 });
 
+// In server.js, modify the validate-spin endpoint
 app.post('/api/cases/validate-spin', async (req, res) => {
     try {
         const { caseId } = req.body;
-        if (!caseId) return res.status(400).json({ error: 'caseId required' });
+        if (!caseId) return res.status(400).json({ valid: false, error: 'caseId required' });
         
         const now = new Date();
         const caseData = await LimitedCase.findOne({ caseId });
         
         if (!caseData) {
-            return res.status(404).json({ valid: false, error: 'Case not found' });
+            return res.status(404).json({ 
+                valid: false, 
+                error: 'Case not found',
+                caseExpired: false
+            });
         }
         
+        const isValid = now >= caseData.startTime && now < caseData.endTime;
+        
         res.json({ 
-            valid: now >= caseData.startTime && now < caseData.endTime,
-            serverTime: now
+            valid: isValid,
+            serverTime: now,
+            caseData: {
+                startTime: caseData.startTime,
+                endTime: caseData.endTime
+            },
+            error: isValid ? null : 'Case is not currently available'
         });
     } catch (err) {
         res.status(500).json({ error: err.message });

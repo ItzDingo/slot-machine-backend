@@ -808,14 +808,17 @@ app.post('/api/mines/loss', async (req, res) => {
   try {
     const { userId, amount, minesCount, revealedCells } = req.body;
     
+    // Calculate 99% of the bet amount (amount is the full bet)
+    const amountToLose = amount * 0.99;
+    
     const session = await mongoose.startSession();
     session.startTransaction();
     
     try {
-      // Update user balance - subtract only the lost amount (99%)
+      // Update user balance - subtract only 99% of the bet
       const user = await User.findOneAndUpdate(
         { discordId: userId },
-        { $inc: { chips: -amount } }, // amount is already 99% of the bet
+        { $inc: { chips: -amountToLose } },
         { new: true, session }
       );
 
@@ -824,13 +827,13 @@ app.post('/api/mines/loss', async (req, res) => {
         return res.status(404).json({ error: 'User not found' });
       }
 
-      // Update stats
+      // Update stats with the actual amount lost (99%)
       await MinesStats.updateOne(
         { userId },
         { 
           $inc: { 
             losses: 1,
-            totalLosses: amount,
+            totalLosses: amountToLose,
             totalGames: 1
           }
         },
@@ -840,7 +843,9 @@ app.post('/api/mines/loss', async (req, res) => {
       await session.commitTransaction();
       res.json({ 
         success: true, 
-        newBalance: user.chips
+        newBalance: user.chips,
+        amountLost: amountToLose,
+        amountKept: amount * 0.01 // 1% kept
       });
     } catch (transactionError) {
       await session.abortTransaction();
@@ -898,3 +903,4 @@ app.get('/api/cases/:caseId/status', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+

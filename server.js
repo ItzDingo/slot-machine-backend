@@ -374,60 +374,170 @@ app.post('/api/admin/limited-items/remove-limit', async (req, res) => {
 
 app.post('/api/spin', async (req, res) => {
   try {
-    const { userId, cost, isInstantSpin, caseId } = req.body;
-    const user = await User.findOne({ discordId: userId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    const { userId, cost, isInstantSpin, caseId, isLimitedCase } = req.body;
     
-    // Check if it's a limited case and validate its status
-    if (caseId) {
-      const caseData = await LimitedCase.findOne({ caseId });
-      if (caseData) {
-        const now = new Date();
-        if (now >= caseData.endTime) {
-          return res.status(400).json({ 
-            error: 'This limited case has expired',
-            caseExpired: true
-          });
+    // Validate required fields
+    if (!userId || cost === undefined) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: userId and cost are required' 
+      });
+    }
+
+    // Find user with inventory data
+    const user = await User.findOne({ discordId: userId })
+      .select('+inventory +instantSpins')
+      .lean();
+    
+    if (!user) {
+      return res.status(404).json({ 
+        error: 'User not found',
+        code: 'USER_NOT_FOUND'
+      });
+    }
+
+    // Convert to number and validate cost
+    const spinCost = Number(cost);
+    if (isNaN(spinCost)) {
+      return res.status(400).json({ 
+        error: 'Invalid cost value',
+        code: 'INVALID_COST'
+      });
+    }
+
+    // Check for limited case validation only if explicitly marked as limited
+    if (isLimitedCase && caseId) {
+      try {
+        const caseData = await LimitedCase.findOne({ caseId })
+          .select('startTime endTime isActive')
+          .lean();
+        
+        if (caseData) {
+          const now = new Date();
+          if (now >= caseData.endTime) {
+            return res.status(400).json({ 
+              error: 'This limited case has expired',
+              caseExpired: true,
+              code: 'CASE_EXPIRED',
+              endTime: caseData.endTime,
+              serverTime: now
+            });
+          }
+          
+          if (caseData.isActive === false) {
+            return res.status(400).json({ 
+              error: 'This case is currently inactive',
+              code: 'CASE_INACTIVE'
+            });
+          }
         }
+      } catch (caseError) {
+        console.error('Case validation error:', caseError);
+        // Don't fail the request if case validation fails
       }
     }
 
-    // Check if it's an instant spin
+    // Handle instant spins
     if (isInstantSpin) {
-      // Check if spins are available
-      if (user.instantSpins.remaining <= 0) {
-        return res.status(400).json({ error: 'No instant spins remaining' });
+      // Check instant spins availability
+      const spinsAvailable = user.instantSpins?.remaining || 0;
+      if (spinsAvailable <= 0) {
+        return res.status(400).json({ 
+          error: 'No instant spins remaining',
+          code: 'NO_INSTANT_SPINS',
+          remaining: 0
+        });
       }
       
-      // Check if user has enough chips for the case cost
-      if (user.chips < cost) {
-        return res.status(400).json({ error: 'Not enough chips' });
+      // Validate chips balance
+      if (user.chips < spinCost) {
+        return res.status(400).json({ 
+          error: 'Not enough chips for instant spin',
+          code: 'INSUFFICIENT_CHIPS',
+          balance: user.chips,
+          required: spinCost
+        });
       }
-      
-      // Deduct one instant spin AND the case cost
-      user.instantSpins.remaining -= 1;
-      user.chips -= cost;
     } else {
-      // Regular spin - check chips
-      if (user.chips < cost) {
-        return res.status(400).json({ error: 'Not enough chips' });
+      // Regular spin - validate chips balance
+      if (user.chips < spinCost) {
+        return res.status(400).json({ 
+          error: 'Not enough chips',
+          code: 'INSUFFICIENT_CHIPS',
+          balance: user.chips,
+          required: spinCost
+        });
       }
-      user.chips -= cost;
     }
 
-    user.lastSpin = new Date();
-    await user.save();
+    // Start transaction for atomic updates
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
+    try {
+      // Update user balance and spins
+      const updateData = {
+        $inc: { chips: -spinCost },
+        $set: { lastSpin: new Date() }
+      };
 
-    res.json({ 
-      success: true, 
-      newBalance: user.chips,
-      instantSpins: user.instantSpins
-    });
+      if (isInstantSpin) {
+        updateData.$inc['instantSpins.remaining'] = -1;
+      }
+
+      const updatedUser = await User.findOneAndUpdate(
+        { discordId: userId },
+        updateData,
+        { 
+          new: true,
+          session,
+          select: 'chips instantSpins inventory' 
+        }
+      );
+
+      // Verify the update was successful
+      if (!updatedUser) {
+        await session.abortTransaction();
+        return res.status(404).json({ 
+          error: 'User not found during update',
+          code: 'UPDATE_FAILED'
+        });
+      }
+
+      // Commit transaction
+      await session.commitTransaction();
+      
+      // Prepare response
+      const response = {
+        success: true,
+        newBalance: updatedUser.chips,
+        instantSpins: updatedUser.instantSpins,
+        timestamp: new Date()
+      };
+
+      // Add case information if applicable
+      if (caseId) {
+        response.caseId = caseId;
+        response.isLimitedCase = isLimitedCase || false;
+      }
+
+      return res.json(response);
+
+    } catch (transactionError) {
+      await session.abortTransaction();
+      console.error('Transaction error:', transactionError);
+      throw transactionError;
+    } finally {
+      session.endSession();
+    }
+
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Spin endpoint error:', err);
+    res.status(500).json({ 
+      error: err.message || 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
   }
 });
-
 
 app.post('/api/win', async (req, res) => {
   try {

@@ -806,24 +806,53 @@ app.post('/api/mines/win', async (req, res) => {
 
 app.post('/api/mines/loss', async (req, res) => {
   try {
-    const { userId, amount, minesCount, revealedCells } = req.body;
-    if (!userId || !amount) {
+    const { userId, amount, keptAmount, minesCount, revealedCells } = req.body;
+    if (!userId || amount === undefined || keptAmount === undefined) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    await MinesStats.updateOne(
-      { userId },
-      { 
-        $inc: { 
-          losses: 1,
-          totalLosses: amount,
-          totalGames: 1
-        }
-      },
-      { upsert: true }
-    );
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
+    try {
+      // Update user balance (they keep 1% of their bet)
+      const user = await User.findOneAndUpdate(
+        { discordId: userId },
+        { $inc: { chips: keptAmount - amount } }, // Subtract loss but add kept amount
+        { new: true, session }
+      );
 
-    res.json({ success: true });
+      if (!user) {
+        await session.abortTransaction();
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Update stats
+      await MinesStats.updateOne(
+        { userId },
+        { 
+          $inc: { 
+            losses: 1,
+            totalLosses: amount,
+            totalGames: 1
+          }
+        },
+        { session, upsert: true }
+      );
+
+      await session.commitTransaction();
+      res.json({ 
+        success: true, 
+        newBalance: user.chips,
+        amountLost: amount,
+        amountKept: keptAmount
+      });
+    } catch (transactionError) {
+      await session.abortTransaction();
+      throw transactionError;
+    } finally {
+      session.endSession();
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

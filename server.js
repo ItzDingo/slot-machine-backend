@@ -806,25 +806,35 @@ app.post('/api/mines/win', async (req, res) => {
 
 app.post('/api/mines/loss', async (req, res) => {
   try {
-    const { userId, amount, keptAmount, minesCount, revealedCells } = req.body;
+    const { userId, amount, keptAmount } = req.body;
     if (!userId || amount === undefined || keptAmount === undefined) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        code: 'MISSING_FIELDS'
+      });
     }
 
     const session = await mongoose.startSession();
     session.startTransaction();
     
     try {
-      // Update user balance (they keep 1% of their bet)
-      const user = await User.findOneAndUpdate(
+      // Update user balance (subtract lost amount but add kept amount)
+      const updatedUser = await User.findOneAndUpdate(
         { discordId: userId },
-        { $inc: { chips: keptAmount - amount } }, // Subtract loss but add kept amount
+        { 
+          $inc: { 
+            chips: keptAmount - amount // This effectively subtracts (amount - keptAmount)
+          } 
+        },
         { new: true, session }
       );
 
-      if (!user) {
+      if (!updatedUser) {
         await session.abortTransaction();
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(404).json({ 
+          error: 'User not found',
+          code: 'USER_NOT_FOUND'
+        });
       }
 
       // Update stats
@@ -843,7 +853,7 @@ app.post('/api/mines/loss', async (req, res) => {
       await session.commitTransaction();
       res.json({ 
         success: true, 
-        newBalance: user.chips,
+        newBalance: updatedUser.chips,
         amountLost: amount,
         amountKept: keptAmount
       });
@@ -854,7 +864,11 @@ app.post('/api/mines/loss', async (req, res) => {
       session.endSession();
     }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Mines loss error:', err);
+    res.status(500).json({ 
+      error: err.message || 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
   }
 });
 

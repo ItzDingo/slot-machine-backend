@@ -808,18 +808,14 @@ app.post('/api/mines/loss', async (req, res) => {
   try {
     const { userId, amount, minesCount, revealedCells } = req.body;
     
-    // Calculate the amount to keep (1% of original bet)
-    const originalBet = amount / 0.99; // Reverse calculate original bet from 99% loss
-    const amountToKeep = originalBet * 0.01; // 1% of original bet
-    
     const session = await mongoose.startSession();
     session.startTransaction();
     
     try {
-      // Update user balance - we only subtract the 99% loss
+      // Update user balance - subtract only the lost amount (99%)
       const user = await User.findOneAndUpdate(
         { discordId: userId },
-        { $inc: { chips: -amount } }, // Only subtract the lost amount (99%)
+        { $inc: { chips: -amount } }, // amount is already 99% of the bet
         { new: true, session }
       );
 
@@ -844,10 +840,7 @@ app.post('/api/mines/loss', async (req, res) => {
       await session.commitTransaction();
       res.json({ 
         success: true, 
-        newBalance: user.chips,
-        amountLost: amount,
-        amountKept: amountToKeep,
-        originalBet: originalBet
+        newBalance: user.chips
       });
     } catch (transactionError) {
       await session.abortTransaction();

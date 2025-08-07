@@ -136,8 +136,8 @@ const initializeLimitedCases = async () => {
         {
             caseId: 'case4',
             name: '???',
-            startTime: new Date('2025-08-07T15:00:00Z'), // Keep UTC time
-            endTime: new Date('2025-08-09T15:00:00Z')
+            startTime: new Date('2025-08-08T15:00:00Z'), // Keep UTC time
+            endTime: new Date('2025-08-10T15:00:00Z')
         }
     ];
 
@@ -880,6 +880,7 @@ app.get('/api/cases/:caseId/status', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
 
